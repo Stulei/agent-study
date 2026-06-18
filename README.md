@@ -10,80 +10,117 @@
 agent-study/
 ├── README.md
 ├── CLAUDE.md
-├── mini_agent.py
-├── eval_agent.py
+├── mini_agent.py              # 入口：run_agent() 多轮循环、CLI 交互
+├── eval_agent.py              # 评估脚本：12 个 case，基于 trace 判断行为
 ├── core/
 │   ├── __init__.py
-│   ├── registry.py
-│   ├── trace.py
-│   ├── validators.py
-│   ├── tool_spec.py
-│   └── tool_registry.py
+│   ├── tool_spec.py           # ToolSpec 类：统一工具定义 + OpenAI schema 生成
+│   ├── tool_registry.py       # ToolRegistry 类：工具注册、查找、执行
+│   ├── registry.py            # 全局 registry 实例 + 三个工具的注册
+│   ├── trace.py               # now_ms()、new_request_id()、add_trace()
+│   └── validators.py          # 三个 validate_*_args() 参数校验函数
 └── tools/
-  ├── __init__.py
-  ├── calculator.py
-  ├── time_tool.py
-  └── text_analyzer.py
+    ├── __init__.py
+    ├── calculator.py           # safe_eval_math() + calculator_tool()
+    ├── time_tool.py            # get_current_time()
+    └── text_analyzer.py        # text_analyzer()
 ```
 
 ## 核心功能
 
 - `mini_agent.py`
-  - 项目入口
-  - 定义模型可调用工具 schema
-  - 实现 `run_agent()`：LLM 调用、工具执行、结果回传、循环控制
+  - 项目入口，定义 `run_agent()` 多轮工具调用循环
+  - 支持 `max_iterations=5` 防止无限循环
+  - 提供交互式 CLI（`python mini_agent.py`）
 - `eval_agent.py`
-  - 评估脚本
-  - 自动执行一批测试用例
+  - 评估脚本，自动执行 12 个测试用例
   - 从 `trace` 提取工具调用行为，判断 Agent 是否符合预期
+  - 支持多工具调用场景评估
+- `core/tool_spec.py`
+  - `ToolSpec` 类：统一封装工具名称、描述、参数 schema、执行函数、校验函数
+  - `to_openai_schema()` 方法生成 OpenAI function-calling 格式
+- `core/tool_registry.py`
+  - `ToolRegistry` 类：管理工具的注册、查找、执行
+  - `execute()` 方法统一处理校验 → 执行 → 错误捕获流程
+  - `get_openai_schema()` 批量导出所有工具 schema
 - `core/registry.py`
-  - 管理工具函数映射 `TOOL_REGISTRY`
-  - 管理参数校验映射 `TOOL_VALIDATORS`
+  - 创建全局 `registry` 实例
+  - 注册 `calculator`、`get_current_time`、`text_analyzer` 三个工具
 - `core/trace.py`
   - 追踪工具调用与请求流程
   - 提供 `now_ms()`、`new_request_id()`、`add_trace()`
 - `core/validators.py`
-  - 工具参数校验函数
-  - 保护工具调用输入是否合法
+  - 工具参数校验函数，保护工具调用输入合法性
 - `tools/*.py`
   - 各个具体工具实现
-  - `calculator.py`：安全表达式计算
+  - `calculator.py`：安全表达式计算（基于 AST）
   - `time_tool.py`：获取当前时间
-  - `text_analyzer.py`：文本基础统计
+  - `text_analyzer.py`：文本基础统计（字符数、片段数、行数等）
 
 ## 设计思路
 
 ### Agent 核心数据流
 
-1. 用户输入进入 `run_agent()`
-2. 将系统提示与用户提问一起发送到模型
-3. 模型判断是否需要调用工具
-4. 若模型返回 `tool_call`，程序执行对应工具
-5. 把工具结果作为 `tool` 角色消息追加到历史消息
-6. 循环调用模型，直到模型不再请求工具
-7. 返回最终回答与完整 `trace`
+```
+用户输入 → run_agent()
+  → 构建 messages（system prompt + user input）
+  → while iteration < max_iterations:
+      → LLM（通过 ToolRegistry.get_openai_schema() 获取工具定义）
+      → 记录 trace: llm_response
+      → 无 tool_calls？ → 返回 final_answer + trace
+      → 有 tool_calls？ → 逐个执行：
+          → ToolRegistry.execute(tool_name, tool_args)
+              → ToolSpec.validator 校验参数
+              → ToolSpec.executor 执行函数
+              → 返回结构化 result (ok/error_type/error)
+          → 工具结果追加为 tool 角色消息
+          → 记录 trace: tool_call
+  → 超过 max_iterations → 返回超时错误 + trace
+```
 
 ### 关键设计原则
 
-- 模型只负责决策，不负责真正执行工具
-- 工具执行结果必须结构化为 `ok/error_type/error` 形式
-- 所有工具调用都要记录 `trace`，便于后续评估
-- 每次 LLM 交互都带上工具 schema，支持多步工具调用
-- 使用 `max_iterations` 防止无限循环
+- **关注点分离**：模型只负责决策，不负责真正执行工具
+- **结构化结果**：工具执行结果统一为 `{"ok": bool, ...}`，失败时附加 `error_type` 和 `error`
+- **全面可观测**：所有 LLM 调用和工具执行都记录 `trace`，便于评估和调试
+- **Schema 驱动**：工具定义通过 `ToolSpec` 统一管理，集中在 `registry.py`，与具体实现解耦
+- **安全执行**：`calculator` 基于 AST 而非 `eval()`，避免代码注入
+- **循环控制**：`max_iterations` 防止无限循环，超限后返回明确错误
 
 ## 已实现能力
 
-- L1：最小 Tool Calling Agent
-- L2：多工具选择
-- L3：工具参数校验与错误恢复
-- L4：工具调用观测与 Trace 设计
-- L5：自动评估能力
-- L6：项目重构与模块化结构
-- L7：Agent Loop v2（多轮工具调用）
+| 模块 | 内容 |
+|---|---|
+| L1 | 最小 Tool Calling Agent（单次 LLM + 工具调用） |
+| L2 | 多工具选择（calculator / time / text_analyzer） |
+| L3 | 工具参数校验与错误恢复 |
+| L4 | 工具调用观测与 Trace 设计 |
+| L5 | 自动评估能力（10 cases → 12 cases） |
+| L6 | 项目重构与模块化结构 |
+| L7 | Agent Loop v2（多轮工具调用循环，max_iterations=5） |
+| L8 | ToolSpec + ToolRegistry 抽象层 |
+| L9 | 多工具/多步调用场景评估（cases 011-012） |
+
+## 评估用例（12 cases）
+
+| Case | 类型 | 预期工具 | 预期结果 |
+|---|---|---|---|
+| case_001 | 计算 128*37 | calculator | ok=true |
+| case_002 | 计算 100/0（异常） | calculator | ok=false |
+| case_003 | 当前时间 | get_current_time | ok=true |
+| case_004 | 文本分析 | text_analyzer | ok=true |
+| case_005 | 概念解释 | None | 不调工具 |
+| case_006 | 计算 (100+250)/7 | calculator | ok=true |
+| case_007 | 计算 2**10 | calculator | ok=true |
+| case_008 | 计算 abc+1（异常） | calculator | ok=false |
+| case_009 | 多行文本分析 | text_analyzer | ok=true |
+| case_010 | 概念解释 | None | 不调工具 |
+| case_011 | 计算后获取字符数（多步） | calculator | ok=true |
+| case_012 | 日期 + 文本分析（多工具） | get_current_time | ok=true |
 
 ## 运行方式
 
-1. 创建虚拟环境并安装依赖
+### 1. 创建虚拟环境并安装依赖
 
 ```bash
 python -m venv .venv
@@ -91,7 +128,7 @@ source .venv/bin/activate
 pip install openai python-dotenv
 ```
 
-2. 在根目录创建 `.env`
+### 2. 配置 `.env`
 
 ```text
 OPENAI_BASE_URL=https://api.deepseek.com
@@ -99,73 +136,54 @@ OPENAI_API_KEY=sk-xxx
 OPENAI_MODEL=deepseek-v4-flash
 ```
 
-3. 运行交互式 Agent
+兼容任何 OpenAI API 兼容的 endpoint（DeepSeek、OpenAI、Qwen 等）。
+
+### 3. 运行
 
 ```bash
+# 交互式运行
 python mini_agent.py
-```
 
-4. 运行评估脚本
-
-```bash
+# 运行评估
 python eval_agent.py
+
+# 单次运行（调试用）
+python -c "from mini_agent import run_agent; a,t=run_agent('帮我计算 128*37', debug=True); print(a); print(t)"
 ```
 
 ## 仓库与分支
 
-- 已在项目中使用标签和分支来标记课程进度：
-  - `lesson07`：已创建并推送（课程 L7 实验点）
-  - `lesson08`：功能分支（已合并到 `main` 并保留）
-  - `lesson09`：已创建用于后续开发
+| 分支/标签 | 说明 |
+|---|---|
+| `main` | 最新代码（已合并 lesson09） |
+| `lesson08` | L8 ToolSpec + ToolRegistry 重构 |
+| `lesson09` | L9 多工具/多步评估（已合并到 main） |
+| `lesson07` (tag) | L7 Agent Loop v2 完成点 |
 
-- 合并策略：当前采用分支开发并在合并到 `main` 前保留分支以便复现课程步骤。
-
-## 配置与敏感信息（`.env`）
-
-- `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `OPENAI_MODEL` 等敏感配置应保存在项目根目录的 `.env` 文件中，但该文件不会被提交到仓库（已经在 `.gitignore` 中配置）。
-- 当你克隆仓库后，请复制或新建 `.env` 并填入你自己的 API Key 与模型配置，例如：
-
-```text
-OPENAI_BASE_URL=https://api.deepseek.com
-OPENAI_API_KEY=sk-xxx
-OPENAI_MODEL=deepseek-v4-flash
-```
-
-- 本地运行示例：
-
-```bash
-source .venv/bin/activate
-python mini_agent.py
-```
+合并策略：分支开发 → 合并到 `main` 后保留分支，便于复现课程步骤。
 
 ## 课程学习路径
 
-本项目对应“跟 AI 学习 Agent”课程的学习线索：
+本项目对应"跟 AI 学习 Agent"课程的学习线索：
 
-- `lesson01｜Tool Calling 到底是什么？`：理解 Agent 的核心流程与最小实现
-- `lesson02｜多工具 Agent`：让模型在多种工具间选择
-- `lesson03｜工具参数校验与错误恢复`：增加参数校验与异常保护
-- `lesson04｜工具调用观测与 Trace 设计`：记录每次交互与工具调用信息
-- `lesson05｜给 Mini Agent 增加基础评估能力`：实现自动评估脚本
-- `lesson06｜代码重构与项目结构`：模块化项目结构，拆分职责
-- `lesson07｜Agent Loop v2`：从固定两次调用升级为多轮工具循环
-
-## 说明与建议
-
-- `CLAUDE.md` 记录了项目总体架构与实现思路，可作为快速概览
-- 当前模型调用依赖 OpenAI 兼容 API，支持 DeepSeek、OpenAI、Qwen 等
-- 若要继续演进，可考虑：
-  - 增加工具抽象层与统一 ToolSpec
-  - 进一步增强评估策略，处理模型不确定性行为
-  - 添加 `.gitignore` 忽略 `.venv/`、`__pycache__/` 等临时文件
+- `lesson01` — Tool Calling 到底是什么？
+- `lesson02` — 多工具 Agent
+- `lesson03` — 工具参数校验与错误恢复
+- `lesson04` — 工具调用观测与 Trace 设计
+- `lesson05` — 给 Mini Agent 增加基础评估能力
+- `lesson06` — 代码重构与项目结构
+- `lesson07` — Agent Loop v2（多轮工具循环）
+- `lesson08` — ToolSpec + ToolRegistry 工具抽象层
+- `lesson09` — 多工具/多步调用场景评估
 
 ## 未来扩展方向
 
-- 支持更复杂的多轮工具调用场景
-- 引入工具链中的状态管理与上下文控制
-- 改造 `eval_agent.py` 为更健壮的行为评估框架
-- 把 `trace` 结构标准化为可视化或分析格式
+- 支持流式输出（streaming）
+- 引入上下文窗口管理与 Token 计数
+- Trace 可视化与结构化导出
+- 支持自定义工具的热注册/热卸载
+- 更健壮的多轮评估框架（处理模型非确定性行为）
 
 ---
 
-如果你想，我也可以继续帮你补齐 `.gitignore`、清理当前仓库中的临时文件，并把 README 进一步补成项目文档格式。
+如需继续演进，可参考 `CLAUDE.md` 了解详细的架构设计和实现细节。
