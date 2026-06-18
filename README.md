@@ -8,7 +8,6 @@
 
 ```
 agent-study/
-├── .env
 ├── README.md
 ├── CLAUDE.md
 ├── mini_agent.py
@@ -19,10 +18,10 @@ agent-study/
 │   ├── trace.py
 │   └── validators.py
 └── tools/
-    ├── __init__.py
-    ├── calculator.py
-    ├── time_tool.py
-    └── text_analyzer.py
+  ├── __init__.py
+  ├── calculator.py
+  ├── time_tool.py
+  └── text_analyzer.py
 ```
 
 ## 核心功能
@@ -108,6 +107,33 @@ python mini_agent.py
 
 ```bash
 python eval_agent.py
+```
+
+## 仓库与分支
+
+- 已在项目中使用标签和分支来标记课程进度：
+  - `lesson07`：已创建并推送（课程 L7 实验点）
+  - `lesson08`：功能分支（已合并到 `main` 并保留）
+  - `lesson09`：已创建用于后续开发
+
+- 合并策略：当前采用分支开发并在合并到 `main` 前保留分支以便复现课程步骤。
+
+## 配置与敏感信息（`.env`）
+
+- `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `OPENAI_MODEL` 等敏感配置应保存在项目根目录的 `.env` 文件中，但该文件不会被提交到仓库（已经在 `.gitignore` 中配置）。
+- 当你克隆仓库后，请复制或新建 `.env` 并填入你自己的 API Key 与模型配置，例如：
+
+```text
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_API_KEY=sk-xxx
+OPENAI_MODEL=deepseek-v4-flash
+```
+
+- 本地运行示例：
+
+```bash
+source .venv/bin/activate
+python mini_agent.py
 ```
 
 ## 课程学习路径
