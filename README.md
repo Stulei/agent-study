@@ -16,7 +16,9 @@ agent-study/
 │   ├── __init__.py
 │   ├── registry.py
 │   ├── trace.py
-│   └── validators.py
+│   ├── validators.py
+│   ├── tool_spec.py
+│   └── tool_registry.py
 └── tools/
   ├── __init__.py
   ├── calculator.py
