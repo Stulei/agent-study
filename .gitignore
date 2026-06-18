@@ -1,0 +1,17 @@
+# Local environment variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+
+# IDE files
+.idea/
+
+# macOS
+.DS_Store
