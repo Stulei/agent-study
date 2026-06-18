@@ -1,4 +1,4 @@
-from core.registry import TOOL_REGISTRY, TOOL_VALIDATORS
+from core.registry import registry
 from core.trace import now_ms, add_trace, new_request_id
 import json
 from typing import Any
@@ -13,114 +13,6 @@ load_dotenv()
 client = OpenAI()
 
 MODEL = os.getenv("OPENAI_MODEL", "deepseek-v4-flash")
-
-TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "calculator",
-            "description": "用于计算数学表达式，例如 128 * 37、(100 + 20) / 3。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "expression": {
-                        "type": "string",
-                        "description": "要计算的数学表达式字符串，例如 '128 * 37'、'(100 + 20) / 3'。",
-                    }
-                },
-                "required": ["expression"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_current_time",
-            "description": "获取当前时间。",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "text_analyzer",
-            "description": "分析文本，返回字符数、按空格切分的片段数、行数、是否为空等基础统计信息。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "要分析的文本字符串。",
-                    }
-                },
-                "required": ["text"],
-                "additionalProperties": False,
-            },
-            "strict": True,
-        },
-    },
-]
-
-
-def execute_tool(tool_name: str, tool_args: dict[str, Any]) -> dict[str, Any]:
-    """
-    统一执行工具：
-    1. 检查工具是否存在
-    2. 校验工具参数
-    3. 执行真实工具
-    4. 捕获异常并结构化返回
-    """
-
-    if tool_name not in TOOL_REGISTRY:
-        return {
-            "ok": False,
-            "error_type": "UnknownTool",
-            "error": f"未知工具: {tool_name}",
-            "tool_name": tool_name,
-        }
-
-    validator = TOOL_VALIDATORS.get(tool_name)
-
-    if validator:
-        is_valid, error_message = validator(tool_args)
-        if not is_valid:
-            return {
-                "ok": False,
-                "error_type": "ValidationError",
-                "error": error_message,
-                "tool_name": tool_name,
-                "tool_args": tool_args,
-            }
-
-    try:
-        tool_func = TOOL_REGISTRY[tool_name]
-        return tool_func(**tool_args)
-
-    except TypeError as e:
-        return {
-            "ok": False,
-            "error_type": "TypeError",
-            "error": str(e),
-            "tool_name": tool_name,
-            "tool_args": tool_args,
-        }
-
-    except Exception as e:
-        return {
-            "ok": False,
-            "error_type": "ToolRuntimeError",
-            "error": str(e),
-            "tool_name": tool_name,
-            "tool_args": tool_args,
-        }
 
 
 def run_agent(user_input: str, debug: bool = False) -> tuple[str, list[dict[str, Any]]]:
@@ -158,7 +50,7 @@ def run_agent(user_input: str, debug: bool = False) -> tuple[str, list[dict[str,
         chat_response = client.chat.completions.create(
             model=MODEL,
             messages=messages,
-            tools=TOOLS,
+            tools=registry.get_openai_schema(),
         )
 
         latency_ms = now_ms() - llm_start_ms
@@ -239,7 +131,7 @@ def run_agent(user_input: str, debug: bool = False) -> tuple[str, list[dict[str,
                 print(f"工具参数: {tool_args}")
 
             tool_start_ms = now_ms()
-            tool_result = execute_tool(tool_name, tool_args)
+            tool_result = registry.execute(tool_name, tool_args)
 
             latency_ms = now_ms() - tool_start_ms
 
