@@ -1,5 +1,6 @@
 from core.tool_spec import ToolSpec
 from typing import Any
+from pydantic import ValidationError
 
 
 class ToolRegistry:
@@ -42,7 +43,20 @@ class ToolRegistry:
                 "error": f"未知工具: {name}",
                 "tool_name": name,
             }
+
         tool_spec = self.get(name)
+        if tool_spec.params_model:
+            try:
+                tool_spec.params_model.model_validate(args)
+            except ValidationError as e:
+                return {
+                    "ok": False,
+                    "error_type": "ValidationError",
+                    "error": e.errors(),
+                    "tool_name": name,
+                    "tool_args": args,
+                }
+
         if tool_spec.validator:
             is_valid, error_message = tool_spec.validator(args)
             if not is_valid:
